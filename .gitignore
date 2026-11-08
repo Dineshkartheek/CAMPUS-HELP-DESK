@@ -2,6 +2,7 @@
 out/
 bin/
 *.class
+node_modules/
 
 # Local credentials and logs
 .env

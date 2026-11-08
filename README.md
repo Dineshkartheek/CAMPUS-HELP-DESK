@@ -14,7 +14,8 @@ CAMPUSCARE is a campus support application for submitting, tracking, and managin
 
 ## Project structure
 
-- `web/` - CAMPUSCARE browser interface
+- `web/` - CAMPUSCARE browser interface, served by the Node.js frontend
+- `app.js`, `server.js`, `api/` - Node.js frontend server and Vercel handler
 - `src/` - Java server and desktop application source
 - `lib/` - MySQL Connector/J dependency
 
@@ -28,7 +29,7 @@ The MySQL server must have the `helpdesk_db` database and the tables used by the
 
 ## Deploying the web app
 
-The browser UI can be deployed to Vercel. The Java API cannot run on Vercel, so deploy it as a Docker web service (for example, on Render) and connect both services to a managed MySQL database.
+The Node.js frontend can be deployed to Vercel. The Java API cannot run on Vercel, so deploy it as a Docker web service (for example, on Render) and connect both services to a managed MySQL database.
 
 ### Deploy the API
 
@@ -41,8 +42,10 @@ The service listens on the `PORT` environment variable. Cross-site cookies are c
 
 ### Deploy the frontend
 
-1. Import the repository into Vercel. The included `vercel.json` publishes the `web/` directory.
-2. Set `window.CAMPUSCARE_API_BASE_URL` in `web/config.js` to the deployed API origin, for example `https://your-api.onrender.com`, and redeploy. Do not add a trailing slash.
+1. Import the repository into Vercel. The Node.js handler serves the files in `web/`.
+2. Set the `CAMPUSCARE_API_BASE_URL` environment variable in Vercel to the deployed API origin, for example `https://your-api.onrender.com`, and redeploy. Do not add a trailing slash.
 3. Ensure the API's `CORS_ORIGIN` exactly matches the deployed Vercel origin.
 
 `PORT`, `DB_URL`, `DB_USER`, `DB_PASSWORD`, `CORS_ORIGIN`, `COOKIE_SAME_SITE`, and `COOKIE_SECURE` are read from the environment. Do not commit credentials.
+
+To run the Node.js frontend locally, run `npm install` and then `npm start`. It listens on port 3000 by default; set `CAMPUSCARE_API_BASE_URL` to the Java API URL if it is running on a different origin.
