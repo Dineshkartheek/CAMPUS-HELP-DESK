@@ -17,3 +17,11 @@ CAMPUSCARE is a campus support application for submitting, tracking, and managin
 - `web/` - CAMPUSCARE browser interface
 - `src/` - Java server and desktop application source
 - `lib/` - MySQL Connector/J dependency
+
+## Running the server
+
+1. Start MySQL and configure the `DB_PASSWORD` environment variable for the MySQL `root` account.
+2. In VS Code, open **Run and Debug** and launch **Launch CAMPUSCARE Server**. The launch configuration includes the MySQL Connector/J driver.
+3. Open [http://localhost:8080](http://localhost:8080).
+
+The MySQL server must have the `helpdesk_db` database and the tables used by the application.

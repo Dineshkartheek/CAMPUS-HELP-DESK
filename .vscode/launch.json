@@ -1,0 +1,16 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "java",
+            "name": "Launch CAMPUSCARE Server",
+            "request": "launch",
+            "mainClass": "Server",
+            "cwd": "${workspaceFolder}",
+            "classPaths": [
+                "${workspaceFolder}/out",
+                "${workspaceFolder}/lib/mysql-connector-j-26.10.0.jar"
+            ]
+        }
+    ]
+}
