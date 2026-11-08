@@ -22,14 +22,15 @@ CAMPUSCARE is a campus support application for submitting, tracking, and managin
 ## Running the server
 
 1. Start MySQL and configure the `DB_PASSWORD` environment variable for the MySQL `root` account.
-2. In VS Code, open **Run and Debug** and launch **Launch CAMPUSCARE Server**. The launch configuration includes the MySQL Connector/J driver.
-3. Open [http://localhost:8080](http://localhost:8080).
+2. In VS Code, open **Run and Debug** and launch **Launch CAMPUSCARE Server**. The Java API listens on port 8080; the launch configuration includes the MySQL Connector/J driver.
+3. Run `npm install` once, then `npm start` to start the Node.js frontend on port 3000. It forwards `/api` requests to the Java API.
+4. Open [http://localhost:3000](http://localhost:3000). You can also use [http://localhost:8080](http://localhost:8080) to access the Java server's built-in frontend.
 
 The MySQL server must have the `helpdesk_db` database and the tables used by the application.
 
 ## Deploying the web app
 
-The Node.js frontend can be deployed to Vercel. The Java API cannot run on Vercel, so deploy it as a Docker web service (for example, on Render) and connect both services to a managed MySQL database.
+The Node.js frontend can be deployed to Vercel. The Java API cannot run on Vercel, so deploy it as a Docker web service (for example, on Render) and connect both services to a managed MySQL database. The Node.js server proxies `/api` requests to the Java service so browser sessions stay same-origin.
 
 ### Deploy the API
 
@@ -43,9 +44,9 @@ The service listens on the `PORT` environment variable. Cross-site cookies are c
 ### Deploy the frontend
 
 1. Import the repository into Vercel. The Node.js handler serves the files in `web/`.
-2. Set the `CAMPUSCARE_API_BASE_URL` environment variable in Vercel to the deployed API origin, for example `https://your-api.onrender.com`, and redeploy. Do not add a trailing slash.
+2. Set `CAMPUSCARE_BACKEND_URL` in the Vercel project to the deployed API origin, for example `https://your-api.onrender.com`, and redeploy. Do not add a trailing slash.
 3. Ensure the API's `CORS_ORIGIN` exactly matches the deployed Vercel origin.
 
 `PORT`, `DB_URL`, `DB_USER`, `DB_PASSWORD`, `CORS_ORIGIN`, `COOKIE_SAME_SITE`, and `COOKIE_SECURE` are read from the environment. Do not commit credentials.
 
-To run the Node.js frontend locally, run `npm install` and then `npm start`. It listens on port 3000 by default; set `CAMPUSCARE_API_BASE_URL` to the Java API URL if it is running on a different origin.
+To run the Node.js frontend locally, run `npm install` and then `npm start`. It listens on port 3000 by default and proxies API requests to `http://localhost:8080`. Set `CAMPUSCARE_BACKEND_URL` if the Java API is running elsewhere.
