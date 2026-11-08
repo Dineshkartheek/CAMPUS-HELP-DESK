@@ -1,0 +1,17 @@
+# Java compiled files
+out/
+bin/
+*.class
+
+# Local credentials and logs
+.env
+.env.*
+!.env.example
+*.log
+
+# Local placeholder repository
+/CAMPUSCARE-HELP-DESK/
+
+# Operating system files
+.DS_Store
+Thumbs.db

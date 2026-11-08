@@ -1,0 +1,814 @@
+
+import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpExchange;
+
+import java.io.*;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
+import java.sql.*;
+import java.security.SecureRandom;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.*;
+
+public class Server {
+
+    private static final Map<String, Session> sessions =
+            new ConcurrentHashMap<>();
+
+    private static final long SESSION_TIME = 2 * 60 * 60 * 1000L;
+
+    private static class Session {
+        int userId;
+        String name;
+        String email;
+        String role;
+        long expiresAt;
+
+        Session(int id, String name, String email, String role) {
+            this.userId = id;
+            this.name = name;
+            this.email = email;
+            this.role = role;
+            this.expiresAt = System.currentTimeMillis() + SESSION_TIME;
+        }
+    }
+
+    public static void main(String[] args) throws Exception {
+        HttpServer server = HttpServer.create(
+                new InetSocketAddress(8080), 0);
+
+        server.createContext("/", Server::handleRequest);
+        server.start();
+
+        System.out.println("CAMPUSCARE Server Started!");
+        System.out.println("Open: http://localhost:8080");
+    }
+
+    private static void handleRequest(HttpExchange ex)
+            throws IOException {
+
+        String path = ex.getRequestURI().getPath();
+        String method = ex.getRequestMethod();
+
+        try {
+            // Serve website
+            if (path.equals("/") && method.equals("GET")) {
+                byte[] content = Files.readAllBytes(
+                        Path.of("web", "index.html"));
+
+                ex.getResponseHeaders().set(
+                        "Content-Type", "text/html; charset=UTF-8");
+                ex.getResponseHeaders().set("Cache-Control", "no-store");
+                ex.sendResponseHeaders(200, content.length);
+                ex.getResponseBody().write(content);
+                ex.close();
+                return;
+            }
+
+            // Student registration
+            if (path.equals("/api/register") && method.equals("POST")) {
+                String body = readBody(ex);
+
+                String name = getValue(body, "name").trim();
+                String email = getValue(body, "email").trim().toLowerCase();
+                String password = getValue(body, "password");
+
+                if (name.isBlank() || email.isBlank()
+                        || password.length() < 8) {
+                    send(ex, 400,
+                            "Name, valid email and password (minimum 8 characters) required",
+                            "text/plain");
+                    return;
+                }
+
+                String sql = "INSERT INTO users "
+                        + "(full_name, email, password, role) "
+                        + "VALUES (?, ?, ?, 'STUDENT')";
+
+                try (Connection con = DBConnection.getConnection();
+                     PreparedStatement ps = con.prepareStatement(sql)) {
+
+                    ps.setString(1, name);
+                    ps.setString(2, email);
+                    ps.setString(3, PasswordUtil.hashPassword(password));
+                    ps.executeUpdate();
+
+                    send(ex, 201, "Student account created successfully!",
+                            "text/plain");
+                }
+                return;
+            }
+
+            // Login
+            if (path.equals("/api/login") && method.equals("POST")) {
+                String body = readBody(ex);
+
+                String email = getValue(body, "email").trim().toLowerCase();
+                String password = getValue(body, "password");
+
+                String sql = "SELECT user_id, full_name, email, password, role "
+                        + "FROM users WHERE email = ?";
+
+                try (Connection con = DBConnection.getConnection();
+                     PreparedStatement ps = con.prepareStatement(sql)) {
+
+                    ps.setString(1, email);
+
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (!rs.next() || !PasswordUtil.verifyPassword(
+                                password, rs.getString("password"))) {
+                            send(ex, 401, "Invalid email or password",
+                                    "text/plain");
+                            return;
+                        }
+
+                        int id = rs.getInt("user_id");
+                        String name = rs.getString("full_name");
+                        String userEmail = rs.getString("email");
+                        String role = rs.getString("role");
+
+                        String token = createToken();
+                        sessions.put(token,
+                                new Session(id, name, userEmail, role));
+
+                        ex.getResponseHeaders().add(
+                                "Set-Cookie",
+                                "CAMPUSCARE_SESSION=" + token
+                                + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=7200");
+
+                        send(ex, 200,
+                                "{\"name\":\"" + escape(name)
+                                + "\",\"email\":\"" + escape(userEmail)
+                                + "\",\"role\":\"" + escape(role) + "\"}",
+                                "application/json");
+                    }
+                }
+                return;
+            }
+
+            // Current logged-in user
+            if (path.equals("/api/me") && method.equals("GET")) {
+                Session user = getSession(ex);
+
+                if (user == null) {
+                    send(ex, 401, "Please login", "text/plain");
+                    return;
+                }
+
+                send(ex, 200,
+                        "{\"user_id\":" + user.userId
+                        + ",\"name\":\"" + escape(user.name)
+                        + "\",\"email\":\"" + escape(user.email)
+                        + "\",\"role\":\"" + escape(user.role) + "\"}",
+                        "application/json");
+                return;
+            }
+
+            // Logout
+            if (path.equals("/api/logout") && method.equals("POST")) {
+                String token = getToken(ex);
+                if (token != null) {
+                    sessions.remove(token);
+                }
+
+                ex.getResponseHeaders().add(
+                        "Set-Cookie",
+                        "CAMPUSCARE_SESSION=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
+
+                send(ex, 200, "Logged out successfully", "text/plain");
+                return;
+            }
+
+            // All ticket operations require login
+            if (path.startsWith("/api/tickets")) {
+                Session user = getSession(ex);
+
+                if (user == null) {
+                    send(ex, 401, "Please login first", "text/plain");
+                    return;
+                }
+
+                // View remarks for a ticket
+                if (path.matches("/api/tickets/\\d+/remarks")
+                        && method.equals("GET")) {
+
+                    int ticketId;
+                    try {
+                        ticketId = Integer.parseInt(path.split("/")[3]);
+                    } catch (Exception e) {
+                        send(ex, 400, "Invalid ticket ID", "text/plain");
+                        return;
+                    }
+
+                    String sql;
+
+                    if (user.role.equals("STUDENT")) {
+                        sql = "SELECT r.remark_id, r.remark_text, "
+                                + "r.created_at, u.full_name AS admin_name "
+                                + "FROM ticket_remarks r "
+                                + "LEFT JOIN users u ON r.admin_id = u.user_id "
+                                + "JOIN tickets t ON r.ticket_id = t.ticket_id "
+                                + "WHERE r.ticket_id = ? AND t.email = ? "
+                                + "ORDER BY r.created_at";
+                    } else if (user.role.equals("ADMIN")
+                            || user.role.equals("MAIN_ADMIN")) {
+                        sql = "SELECT r.remark_id, r.remark_text, "
+                                + "r.created_at, u.full_name AS admin_name "
+                                + "FROM ticket_remarks r "
+                                + "LEFT JOIN users u ON r.admin_id = u.user_id "
+                                + "WHERE r.ticket_id = ? "
+                                + "ORDER BY r.created_at";
+                    } else {
+                        send(ex, 403, "Access denied", "text/plain");
+                        return;
+                    }
+
+                    try (Connection con = DBConnection.getConnection();
+                         PreparedStatement ps = con.prepareStatement(sql)) {
+
+                        ps.setInt(1, ticketId);
+
+                        if (user.role.equals("STUDENT")) {
+                            ps.setString(2, user.email);
+                        }
+
+                        try (ResultSet rs = ps.executeQuery()) {
+                            StringBuilder json = new StringBuilder("[");
+                            boolean first = true;
+
+                            while (rs.next()) {
+                                if (!first) json.append(",");
+                                first = false;
+
+                                json.append("{")
+                                    .append("\"remark_id\":").append(rs.getInt("remark_id")).append(",")
+                                    .append("\"remark_text\":\"").append(escape(rs.getString("remark_text"))).append("\",")
+                                    .append("\"admin_name\":\"").append(escape(rs.getString("admin_name"))).append("\",")
+                                    .append("\"created_at\":\"").append(escape(rs.getString("created_at"))).append("\"")
+                                    .append("}");
+                            }
+
+                            json.append("]");
+                            send(ex, 200, json.toString(), "application/json");
+                        }
+                    }
+                    return;
+                }
+
+                // Add a remark: admins only
+                if (path.matches("/api/tickets/\\d+/remarks")
+                        && method.equals("POST")) {
+
+                    if (!user.role.equals("ADMIN")
+                            && !user.role.equals("MAIN_ADMIN")) {
+                        send(ex, 403, "Only admins can add remarks", "text/plain");
+                        return;
+                    }
+
+                    int ticketId;
+                    try {
+                        ticketId = Integer.parseInt(path.split("/")[3]);
+                    } catch (Exception e) {
+                        send(ex, 400, "Invalid ticket ID", "text/plain");
+                        return;
+                    }
+
+                    String remark = getValue(readBody(ex), "remark").trim();
+
+                    if (remark.isBlank()) {
+                        send(ex, 400, "Remark cannot be empty", "text/plain");
+                        return;
+                    }
+
+                    String sql = "INSERT INTO ticket_remarks "
+                            + "(ticket_id, admin_id, remark_text) "
+                            + "SELECT ?, ?, ? FROM tickets WHERE ticket_id = ?";
+
+                    try (Connection con = DBConnection.getConnection();
+                         PreparedStatement ps = con.prepareStatement(sql)) {
+
+                        ps.setInt(1, ticketId);
+                        ps.setInt(2, user.userId);
+                        ps.setString(3, remark);
+                        ps.setInt(4, ticketId);
+
+                        int rows = ps.executeUpdate();
+
+                        if (rows > 0) {
+                            send(ex, 201, "Remark added successfully!",
+                                    "text/plain");
+                        } else {
+                            send(ex, 404, "Ticket not found", "text/plain");
+                        }
+                    }
+                    return;
+                }
+
+                // View tickets
+                if (path.equals("/api/tickets") && method.equals("GET")) {
+
+                    String sql;
+                    if (user.role.equals("STUDENT")) {
+                        sql = "SELECT * FROM tickets WHERE email = ? "
+                                + "ORDER BY ticket_id DESC";
+                    } else if (user.role.equals("ADMIN")
+                            || user.role.equals("MAIN_ADMIN")) {
+                        sql = "SELECT * FROM tickets ORDER BY ticket_id DESC";
+                    } else {
+                        send(ex, 403, "Access denied", "text/plain");
+                        return;
+                    }
+
+                    try (Connection con = DBConnection.getConnection();
+                         PreparedStatement ps = con.prepareStatement(sql)) {
+
+                        if (user.role.equals("STUDENT")) {
+                            ps.setString(1, user.email);
+                        }
+
+                        try (ResultSet rs = ps.executeQuery()) {
+                            StringBuilder json = new StringBuilder("[");
+                            boolean first = true;
+
+                            while (rs.next()) {
+                                if (!first) json.append(",");
+                                first = false;
+
+                                json.append("{")
+                                    .append("\"ticket_id\":").append(rs.getInt("ticket_id")).append(",")
+                                    .append("\"student_name\":\"").append(escape(rs.getString("student_name"))).append("\",")
+                                    .append("\"email\":\"").append(escape(rs.getString("email"))).append("\",")
+                                    .append("\"category\":\"").append(escape(rs.getString("category"))).append("\",")
+                                    .append("\"description\":\"").append(escape(rs.getString("description"))).append("\",")
+                                    .append("\"status\":\"").append(escape(rs.getString("status"))).append("\"")
+                                    .append("}");
+                            }
+
+                            json.append("]");
+                            send(ex, 200, json.toString(), "application/json");
+                        }
+                    }
+                    return;
+                }
+
+                // Submit ticket: students only
+                if (path.equals("/api/tickets") && method.equals("POST")) {
+
+                    if (!user.role.equals("STUDENT")) {
+                        send(ex, 403,
+                                "Only students can submit complaints",
+                                "text/plain");
+                        return;
+                    }
+
+                    String body = readBody(ex);
+                    String category = getValue(body, "category").trim();
+                    String description = getValue(body, "description").trim();
+
+                    if (category.isBlank() || description.isBlank()) {
+                        send(ex, 400, "All fields are required", "text/plain");
+                        return;
+                    }
+
+                    String sql = "INSERT INTO tickets "
+                            + "(student_name, email, category, description) "
+                            + "VALUES (?, ?, ?, ?)";
+
+                    try (Connection con = DBConnection.getConnection();
+                         PreparedStatement ps = con.prepareStatement(sql)) {
+
+                        ps.setString(1, user.name);
+                        ps.setString(2, user.email);
+                        ps.setString(3, category);
+                        ps.setString(4, description);
+                        ps.executeUpdate();
+
+                        send(ex, 201, "Complaint submitted successfully!",
+                                "text/plain");
+                    }
+                    return;
+                }
+
+                // Update ticket: admins only
+                if (path.startsWith("/api/tickets/")
+                        && method.equals("PUT")) {
+
+                    if (!user.role.equals("ADMIN")
+                            && !user.role.equals("MAIN_ADMIN")) {
+                        send(ex, 403,
+                                "Students cannot update complaint status",
+                                "text/plain");
+                        return;
+                    }
+
+                    int id;
+                    try {
+                        id = Integer.parseInt(
+                                path.substring("/api/tickets/".length()));
+                    } catch (NumberFormatException e) {
+                        send(ex, 400, "Invalid ticket ID", "text/plain");
+                        return;
+                    }
+
+                    String status = getValue(readBody(ex), "status");
+
+                    if (!status.equals("Pending")
+                            && !status.equals("In Progress")
+                            && !status.equals("Resolved")) {
+                        send(ex, 400, "Invalid status", "text/plain");
+                        return;
+                    }
+
+                    String sql = "UPDATE tickets SET status = ? WHERE ticket_id = ?";
+
+                    try (Connection con = DBConnection.getConnection();
+                         PreparedStatement ps = con.prepareStatement(sql)) {
+
+                        ps.setString(1, status);
+                        ps.setInt(2, id);
+
+                        int rows = ps.executeUpdate();
+
+                        if (rows > 0) {
+                            send(ex, 200, "Status updated successfully!",
+                                    "text/plain");
+                        } else {
+                            send(ex, 404, "Ticket not found", "text/plain");
+                        }
+                    }
+                    return;
+                }
+
+                send(ex, 404, "Ticket API not found", "text/plain");
+                return;
+            }
+
+            // Campus Support Reports: students view their own report statuses
+            if (path.equals("/api/support-reports") && method.equals("GET")) {
+                Session user = getSession(ex);
+
+                if (user == null) {
+                    send(ex, 401, "Please login first", "text/plain");
+                    return;
+                }
+
+                String sql;
+
+                if (user.role.equals("STUDENT")) {
+                    sql = "SELECT report_id, category, status, created_at "
+                            + "FROM campus_support_reports "
+                            + "WHERE student_id = ? ORDER BY report_id DESC";
+                } else if (user.role.equals("MAIN_ADMIN")) {
+                    sql = "SELECT r.report_id, r.student_id, u.full_name, "
+                            + "u.email, r.category, r.description, r.status, "
+                            + "r.created_at, r.updated_at "
+                            + "FROM campus_support_reports r "
+                            + "JOIN users u ON r.student_id = u.user_id "
+                            + "ORDER BY r.report_id DESC";
+                } else {
+                    send(ex, 403,
+                            "Confidential reports are accessible to Main Admin only",
+                            "text/plain");
+                    return;
+                }
+
+                try (Connection con = DBConnection.getConnection();
+                     PreparedStatement ps = con.prepareStatement(sql)) {
+
+                    if (user.role.equals("STUDENT")) {
+                        ps.setInt(1, user.userId);
+                    }
+
+                    try (ResultSet rs = ps.executeQuery()) {
+                        StringBuilder json = new StringBuilder("[");
+                        boolean first = true;
+
+                        while (rs.next()) {
+                            if (!first) json.append(",");
+                            first = false;
+
+                            json.append("{")
+                                .append("\"report_id\":").append(rs.getInt("report_id")).append(",")
+                                .append("\"category\":\"").append(escape(rs.getString("category"))).append("\",")
+                                .append("\"status\":\"").append(escape(rs.getString("status"))).append("\",")
+                                .append("\"created_at\":\"").append(escape(rs.getString("created_at"))).append("\"");
+
+                            if (user.role.equals("MAIN_ADMIN")) {
+                                json.append(",")
+                                    .append("\"student_id\":").append(rs.getInt("student_id")).append(",")
+                                    .append("\"student_name\":\"").append(escape(rs.getString("full_name"))).append("\",")
+                                    .append("\"email\":\"").append(escape(rs.getString("email"))).append("\",")
+                                    .append("\"description\":\"").append(escape(rs.getString("description"))).append("\",")
+                                    .append("\"updated_at\":\"").append(escape(rs.getString("updated_at"))).append("\"");
+                            }
+
+                            json.append("}");
+                        }
+
+                        json.append("]");
+                        send(ex, 200, json.toString(), "application/json");
+                    }
+                }
+                return;
+            }
+
+            // Submit confidential campus support report: students only
+            if (path.equals("/api/support-reports") && method.equals("POST")) {
+                Session user = getSession(ex);
+
+                if (user == null) {
+                    send(ex, 401, "Please login first", "text/plain");
+                    return;
+                }
+
+                if (!user.role.equals("STUDENT")) {
+                    send(ex, 403, "Only students can submit support reports",
+                            "text/plain");
+                    return;
+                }
+
+                String body = readBody(ex);
+                String category = getValue(body, "category").trim();
+                String description = getValue(body, "description").trim();
+
+                if (category.isBlank() || description.isBlank()) {
+                    send(ex, 400, "Category and description are required",
+                            "text/plain");
+                    return;
+                }
+
+                String sql = "INSERT INTO campus_support_reports "
+                        + "(student_id, category, description) VALUES (?, ?, ?)";
+
+                try (Connection con = DBConnection.getConnection();
+                     PreparedStatement ps = con.prepareStatement(sql)) {
+
+                    ps.setInt(1, user.userId);
+                    ps.setString(2, category);
+                    ps.setString(3, description);
+                    ps.executeUpdate();
+
+                    send(ex, 201, "Confidential report submitted successfully!",
+                            "text/plain");
+                }
+                return;
+            }
+
+            // Main Admin only: update confidential report status
+            if (path.matches("/api/support-reports/\\d+")
+                    && method.equals("PUT")) {
+
+                Session user = getSession(ex);
+
+                if (user == null || !user.role.equals("MAIN_ADMIN")) {
+                    send(ex, 403,
+                            "Only Main Admin can manage confidential reports",
+                            "text/plain");
+                    return;
+                }
+
+                int reportId;
+                try {
+                    reportId = Integer.parseInt(
+                            path.substring("/api/support-reports/".length()));
+                } catch (NumberFormatException e) {
+                    send(ex, 400, "Invalid report ID", "text/plain");
+                    return;
+                }
+
+                String status = getValue(readBody(ex), "status");
+
+                if (!status.equals("Pending")
+                        && !status.equals("In Progress")
+                        && !status.equals("Resolved")) {
+                    send(ex, 400, "Invalid report status", "text/plain");
+                    return;
+                }
+
+                String sql = "UPDATE campus_support_reports "
+                        + "SET status = ? WHERE report_id = ?";
+
+                try (Connection con = DBConnection.getConnection();
+                     PreparedStatement ps = con.prepareStatement(sql)) {
+
+                    ps.setString(1, status);
+                    ps.setInt(2, reportId);
+
+                    int rows = ps.executeUpdate();
+
+                    if (rows > 0) {
+                        send(ex, 200, "Report status updated successfully!",
+                                "text/plain");
+                    } else {
+                        send(ex, 404, "Report not found", "text/plain");
+                    }
+                }
+                return;
+            }
+
+            // Main Admin: view regular admins
+            if (path.equals("/api/admins") && method.equals("GET")) {
+                Session user = getSession(ex);
+
+                if (user == null || !user.role.equals("MAIN_ADMIN")) {
+                    send(ex, 403, "Main Admin access only", "text/plain");
+                    return;
+                }
+
+                String sql = "SELECT user_id, full_name, email, created_at "
+                        + "FROM users WHERE role = 'ADMIN' ORDER BY user_id";
+
+                try (Connection con = DBConnection.getConnection();
+                     Statement st = con.createStatement();
+                     ResultSet rs = st.executeQuery(sql)) {
+
+                    StringBuilder json = new StringBuilder("[");
+                    boolean first = true;
+
+                    while (rs.next()) {
+                        if (!first) json.append(",");
+                        first = false;
+
+                        json.append("{")
+                            .append("\"user_id\":").append(rs.getInt("user_id")).append(",")
+                            .append("\"name\":\"").append(escape(rs.getString("full_name"))).append("\",")
+                            .append("\"email\":\"").append(escape(rs.getString("email"))).append("\"")
+                            .append("}");
+                    }
+
+                    json.append("]");
+                    send(ex, 200, json.toString(), "application/json");
+                }
+                return;
+            }
+
+            // Main Admin: create a regular admin
+            if (path.equals("/api/admins") && method.equals("POST")) {
+                Session user = getSession(ex);
+
+                if (user == null || !user.role.equals("MAIN_ADMIN")) {
+                    send(ex, 403, "Main Admin access only", "text/plain");
+                    return;
+                }
+
+                String body = readBody(ex);
+                String name = getValue(body, "name").trim();
+                String email = getValue(body, "email").trim().toLowerCase();
+                String password = getValue(body, "password");
+
+                if (name.isBlank() || email.isBlank()
+                        || password.length() < 8) {
+                    send(ex, 400, "Enter valid details. Password needs 8 characters.",
+                            "text/plain");
+                    return;
+                }
+
+                String sql = "INSERT INTO users "
+                        + "(full_name, email, password, role) "
+                        + "VALUES (?, ?, ?, 'ADMIN')";
+
+                try (Connection con = DBConnection.getConnection();
+                     PreparedStatement ps = con.prepareStatement(sql)) {
+
+                    ps.setString(1, name);
+                    ps.setString(2, email);
+                    ps.setString(3, PasswordUtil.hashPassword(password));
+                    ps.executeUpdate();
+
+                    send(ex, 201, "Regular Admin created successfully!",
+                            "text/plain");
+                }
+                return;
+            }
+
+            // Main Admin: delete a regular admin (never a Main Admin)
+            if (path.startsWith("/api/admins/")
+                    && method.equals("DELETE")) {
+                Session user = getSession(ex);
+
+                if (user == null || !user.role.equals("MAIN_ADMIN")) {
+                    send(ex, 403, "Main Admin access only", "text/plain");
+                    return;
+                }
+
+                int id;
+                try {
+                    id = Integer.parseInt(
+                            path.substring("/api/admins/".length()));
+                } catch (NumberFormatException e) {
+                    send(ex, 400, "Invalid admin ID", "text/plain");
+                    return;
+                }
+
+                String sql = "DELETE FROM users WHERE user_id = ? AND role = 'ADMIN'";
+
+                try (Connection con = DBConnection.getConnection();
+                     PreparedStatement ps = con.prepareStatement(sql)) {
+
+                    ps.setInt(1, id);
+                    int rows = ps.executeUpdate();
+
+                    if (rows > 0) {
+                        send(ex, 200, "Admin account deleted", "text/plain");
+                    } else {
+                        send(ex, 404, "Regular Admin not found", "text/plain");
+                    }
+                }
+                return;
+            }
+
+            send(ex, 404, "Page not found", "text/plain");
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            send(ex, 500, "Server error", "text/plain");
+        }
+    }
+
+    private static String readBody(HttpExchange ex) throws IOException {
+        return new String(ex.getRequestBody().readAllBytes(),
+                StandardCharsets.UTF_8);
+    }
+
+    private static Session getSession(HttpExchange ex) {
+        String token = getToken(ex);
+
+        if (token == null) return null;
+
+        Session user = sessions.get(token);
+
+        if (user == null) return null;
+
+        if (System.currentTimeMillis() > user.expiresAt) {
+            sessions.remove(token);
+            return null;
+        }
+
+        return user;
+    }
+
+    private static String getToken(HttpExchange ex) {
+        String cookie = ex.getRequestHeaders().getFirst("Cookie");
+
+        if (cookie == null) return null;
+
+        for (String part : cookie.split(";")) {
+            String item = part.trim();
+
+            if (item.startsWith("CAMPUSCARE_SESSION=")) {
+                return item.substring("CAMPUSCARE_SESSION=".length());
+            }
+        }
+
+        return null;
+    }
+
+    private static String createToken() {
+        byte[] bytes = new byte[32];
+        new SecureRandom().nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
+    private static String getValue(String json, String key) {
+        Pattern pattern = Pattern.compile(
+                "\"" + Pattern.quote(key)
+                + "\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"");
+
+        Matcher matcher = pattern.matcher(json);
+
+        if (matcher.find()) {
+            return matcher.group(1)
+                    .replace("\\\"", "\"")
+                    .replace("\\n", "\n")
+                    .replace("\\r", "\r")
+                    .replace("\\\\", "\\");
+        }
+
+        return "";
+    }
+
+    private static String escape(String value) {
+        if (value == null) return "";
+
+        return value.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r");
+    }
+
+    private static void send(HttpExchange ex, int code,
+            String message, String contentType) throws IOException {
+
+        byte[] bytes = message.getBytes(StandardCharsets.UTF_8);
+
+        ex.getResponseHeaders().set(
+                "Content-Type", contentType + "; charset=UTF-8");
+
+        ex.getResponseHeaders().set("Cache-Control", "no-store");
+        ex.sendResponseHeaders(code, bytes.length);
+        ex.getResponseBody().write(bytes);
+        ex.close();
+    }
+}
