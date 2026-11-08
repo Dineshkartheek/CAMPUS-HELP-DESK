@@ -18,6 +18,8 @@ public class Server {
             new ConcurrentHashMap<>();
 
     private static final long SESSION_TIME = 2 * 60 * 60 * 1000L;
+    private static final String CORS_ORIGIN =
+            System.getenv().getOrDefault("CORS_ORIGIN", "");
 
     private static class Session {
         int userId;
@@ -37,17 +39,58 @@ public class Server {
 
     public static void main(String[] args) throws Exception {
         HttpServer server = HttpServer.create(
-                new InetSocketAddress(8080), 0);
+                new InetSocketAddress(
+                        Integer.parseInt(System.getenv().getOrDefault(
+                                "PORT", "8080"))), 0);
 
         server.createContext("/", Server::handleRequest);
         server.start();
 
         System.out.println("CAMPUSCARE Server Started!");
-        System.out.println("Open: http://localhost:8080");
+        System.out.println("Listening on port "
+                + System.getenv().getOrDefault("PORT", "8080"));
     }
 
     private static void handleRequest(HttpExchange ex)
             throws IOException {
+
+        String origin = ex.getRequestHeaders().getFirst("Origin");
+        if (origin != null && origin.equals(CORS_ORIGIN)
+                && !CORS_ORIGIN.isBlank()) {
+            ex.getResponseHeaders().set(
+                    "Access-Control-Allow-Origin", CORS_ORIGIN);
+            ex.getResponseHeaders().set(
+                    "Access-Control-Allow-Credentials", "true");
+            ex.getResponseHeaders().set("Vary", "Origin");
+        }
+
+        if (ex.getRequestMethod().equals("OPTIONS")) {
+            if (origin == null || !origin.equals(CORS_ORIGIN)
+                    || CORS_ORIGIN.isBlank()) {
+                send(ex, 403, "Origin not allowed", "text/plain");
+                return;
+            }
+
+            ex.getResponseHeaders().set(
+                    "Access-Control-Allow-Methods",
+                    "GET, POST, PUT, DELETE, OPTIONS");
+            ex.getResponseHeaders().set(
+                    "Access-Control-Allow-Headers", "Content-Type");
+            ex.getResponseHeaders().set(
+                    "Access-Control-Max-Age", "600");
+            ex.sendResponseHeaders(204, -1);
+            ex.close();
+            return;
+        }
+
+        if (!CORS_ORIGIN.isBlank()
+                && (ex.getRequestMethod().equals("POST")
+                    || ex.getRequestMethod().equals("PUT")
+                    || ex.getRequestMethod().equals("DELETE"))
+                && !CORS_ORIGIN.equals(origin)) {
+            send(ex, 403, "Origin not allowed", "text/plain");
+            return;
+        }
 
         String path = ex.getRequestURI().getPath();
         String method = ex.getRequestMethod();
@@ -60,6 +103,19 @@ public class Server {
 
                 ex.getResponseHeaders().set(
                         "Content-Type", "text/html; charset=UTF-8");
+                ex.getResponseHeaders().set("Cache-Control", "no-store");
+                ex.sendResponseHeaders(200, content.length);
+                ex.getResponseBody().write(content);
+                ex.close();
+                return;
+            }
+
+            if (path.equals("/config.js") && method.equals("GET")) {
+                byte[] content = Files.readAllBytes(
+                        Path.of("web", "config.js"));
+
+                ex.getResponseHeaders().set(
+                        "Content-Type", "application/javascript; charset=UTF-8");
                 ex.getResponseHeaders().set("Cache-Control", "no-store");
                 ex.sendResponseHeaders(200, content.length);
                 ex.getResponseBody().write(content);
@@ -135,8 +191,7 @@ public class Server {
 
                         ex.getResponseHeaders().add(
                                 "Set-Cookie",
-                                "CAMPUSCARE_SESSION=" + token
-                                + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=7200");
+                                sessionCookie(token, 7200));
 
                         send(ex, 200,
                                 "{\"name\":\"" + escape(name)
@@ -175,7 +230,7 @@ public class Server {
 
                 ex.getResponseHeaders().add(
                         "Set-Cookie",
-                        "CAMPUSCARE_SESSION=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
+                        sessionCookie("", 0));
 
                 send(ex, 200, "Logged out successfully", "text/plain");
                 return;
@@ -769,6 +824,24 @@ public class Server {
         byte[] bytes = new byte[32];
         new SecureRandom().nextBytes(bytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
+    private static String sessionCookie(String token, int maxAge) {
+        String sameSite = System.getenv().getOrDefault(
+                "COOKIE_SAME_SITE", "Strict");
+        if (!sameSite.equalsIgnoreCase("Strict")
+                && !sameSite.equalsIgnoreCase("Lax")
+                && !sameSite.equalsIgnoreCase("None")) {
+            throw new IllegalStateException(
+                    "COOKIE_SAME_SITE must be Strict, Lax, or None");
+        }
+
+        String secure = Boolean.parseBoolean(
+                System.getenv().getOrDefault("COOKIE_SECURE", "false"))
+                ? "; Secure" : "";
+        return "CAMPUSCARE_SESSION=" + token
+                + "; Path=/; HttpOnly; SameSite=" + sameSite
+                + secure + "; Max-Age=" + maxAge;
     }
 
     private static String getValue(String json, String key) {

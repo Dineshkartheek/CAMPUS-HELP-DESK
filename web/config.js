@@ -1,0 +1,1 @@
+window.CAMPUSCARE_API_BASE_URL = "";

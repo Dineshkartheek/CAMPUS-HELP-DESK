@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: campuscare-api
+    runtime: docker
+    plan: free
+    envVars:
+      - key: DB_URL
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: COOKIE_SAME_SITE
+        value: "None"
+      - key: COOKIE_SECURE
+        value: "true"

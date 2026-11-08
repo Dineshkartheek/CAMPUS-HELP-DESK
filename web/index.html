@@ -266,13 +266,15 @@ textarea{resize:vertical;min-height:115px}
   </div>
 </div>
 
+<script src="/config.js"></script>
 <script>
 let currentUser=null,currentRole="STUDENT",tickets=[],activeRemarkTicket=null;
 const $=id=>document.getElementById(id);
+const API_BASE_URL=(window.CAMPUSCARE_API_BASE_URL||"").replace(/\/+$/,"");
 
 async function api(url,options={}){
-  const response=await fetch(url,{
-    ...options,credentials:"same-origin",
+  const response=await fetch(API_BASE_URL+url,{
+    ...options,credentials:"include",
     headers:{...(options.body?{"Content-Type":"application/json"}:{}),...(options.headers||{})}
   });
   const text=await response.text();
