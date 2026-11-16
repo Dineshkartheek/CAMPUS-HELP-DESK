@@ -43,9 +43,10 @@ The service listens on Render's `PORT` environment variable and checks `/api/hea
 
 ### Deploy the frontend
 
-1. Import the repository into Vercel. The Node.js handler serves the files in `web/`.
-2. After Render has created the backend, copy its actual public service origin. In Vercel **Settings → Environment Variables**, set `CAMPUSCARE_BACKEND_URL` for Production to that origin (format: `https://<your-render-service>.onrender.com`, no trailing slash), then redeploy. Do not substitute a guessed hostname.
-3. Ensure the API's `CORS_ORIGIN` exactly matches the deployed Vercel origin.
+1. Import the repository into Vercel with the repository root (`.`) as the **Root Directory**. This is an Express/serverless app with plain HTML in `web/`, not a Vite or React project.
+2. Keep the **Framework Preset** set to Express. The repository's `vercel.json` also selects Express and disables the Vite build/output-directory overrides; no `vite build`, `npm run build`, or `dist` output is required. Vercel installs the root `package.json` dependencies and serves the existing `api/index.js` function with the included `web/` files.
+3. After Render has created the backend, copy its actual public service origin. In Vercel **Settings → Environment Variables**, set `CAMPUSCARE_BACKEND_URL` for Production to that origin (format: `https://<your-render-service>.onrender.com`, no trailing slash), then redeploy. Do not substitute a guessed hostname.
+4. Ensure the API's `CORS_ORIGIN` exactly matches the deployed Vercel origin.
 
 `PORT`, `DB_URL`, `DB_USER`, `DB_PASSWORD`, `CORS_ORIGIN`, `COOKIE_SAME_SITE`, and `COOKIE_SECURE` are read from the Java service environment. In production, the frontend returns a configuration error instead of falling back to localhost when `CAMPUSCARE_BACKEND_URL` is unset.
 
