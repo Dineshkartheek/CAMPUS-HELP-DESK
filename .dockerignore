@@ -1,0 +1,10 @@
+.git
+.vscode
+node_modules
+out
+bin
+*.class
+*.log
+.env
+.env.*
+!.env.example

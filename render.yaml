@@ -3,6 +3,7 @@ services:
     name: campuscare-api
     runtime: docker
     plan: free
+    branch: main
     healthCheckPath: /api/health
     envVars:
       - key: DB_URL

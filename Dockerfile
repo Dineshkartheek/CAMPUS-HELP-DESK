@@ -9,5 +9,5 @@ WORKDIR /app
 COPY --from=build /app/out ./out
 COPY --from=build /app/lib/mysql-connector-j-26.10.0.jar ./lib/mysql-connector-j-26.10.0.jar
 COPY web ./web
-EXPOSE 10000
+EXPOSE 8080
 CMD ["sh", "-c", "java -cp out:lib/mysql-connector-j-26.10.0.jar Server"]
