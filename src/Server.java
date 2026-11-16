@@ -78,7 +78,7 @@ public class Server {
 
             ex.getResponseHeaders().set(
                     "Access-Control-Allow-Methods",
-                    "GET, POST, PUT, DELETE, OPTIONS");
+                    "GET, POST, PUT, PATCH, DELETE, OPTIONS");
             ex.getResponseHeaders().set(
                     "Access-Control-Allow-Headers", "Accept, Content-Type");
             ex.getResponseHeaders().set(
@@ -91,6 +91,7 @@ public class Server {
         if (!CORS_ORIGIN.isBlank()
                 && (ex.getRequestMethod().equals("POST")
                     || ex.getRequestMethod().equals("PUT")
+                    || ex.getRequestMethod().equals("PATCH")
                     || ex.getRequestMethod().equals("DELETE"))
                 && !CORS_ORIGIN.equals(origin)) {
             send(ex, 403, "Origin not allowed", "text/plain");
