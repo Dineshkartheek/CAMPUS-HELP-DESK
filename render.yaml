@@ -3,6 +3,7 @@ services:
     name: campuscare-api
     runtime: docker
     plan: free
+    healthCheckPath: /api/health
     envVars:
       - key: DB_URL
         sync: false
@@ -11,7 +12,7 @@ services:
       - key: DB_PASSWORD
         sync: false
       - key: CORS_ORIGIN
-        sync: false
+        value: https://campus-help-desk-git-main-dineshkartheekvajrapu-6901.vercel.app
       - key: COOKIE_SAME_SITE
         value: "None"
       - key: COOKIE_SECURE

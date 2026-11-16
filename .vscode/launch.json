@@ -7,6 +7,13 @@
             "request": "launch",
             "mainClass": "Server",
             "cwd": "${workspaceFolder}",
+            "env": {
+                "DB_URL": "jdbc:mysql://localhost:3306/helpdesk_db",
+                "DB_USER": "root",
+                "CORS_ORIGIN": "http://localhost:3000",
+                "COOKIE_SAME_SITE": "Lax",
+                "COOKIE_SECURE": "false"
+            },
             "classPaths": [
                 "${workspaceFolder}/out",
                 "${workspaceFolder}/lib/mysql-connector-j-26.10.0.jar"

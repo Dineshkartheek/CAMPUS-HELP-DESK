@@ -38,6 +38,11 @@ public class Server {
     }
 
     public static void main(String[] args) throws Exception {
+        if (CORS_ORIGIN.isBlank() || CORS_ORIGIN.equals("*")) {
+            throw new IllegalStateException(
+                    "CORS_ORIGIN must be set to the exact allowed browser origin.");
+        }
+
         HttpServer server = HttpServer.create(
                 new InetSocketAddress(
                         Integer.parseInt(System.getenv().getOrDefault(
@@ -75,7 +80,7 @@ public class Server {
                     "Access-Control-Allow-Methods",
                     "GET, POST, PUT, DELETE, OPTIONS");
             ex.getResponseHeaders().set(
-                    "Access-Control-Allow-Headers", "Content-Type");
+                    "Access-Control-Allow-Headers", "Accept, Content-Type");
             ex.getResponseHeaders().set(
                     "Access-Control-Max-Age", "600");
             ex.sendResponseHeaders(204, -1);
@@ -96,6 +101,24 @@ public class Server {
         String method = ex.getRequestMethod();
 
         try {
+            if (path.equals("/api/health") && method.equals("GET")) {
+                try (Connection con = DBConnection.getConnection();
+                     Statement statement = con.createStatement()) {
+                    statement.execute("SELECT 1");
+                    send(ex, 200,
+                            "{\"status\":\"ok\",\"database\":\"ok\"}",
+                            "application/json");
+                } catch (SQLException e) {
+                    System.err.println(
+                            "CAMPUSCARE database health check failed: "
+                            + e.getMessage());
+                    send(ex, 503,
+                            "{\"status\":\"unavailable\",\"database\":\"unavailable\"}",
+                            "application/json");
+                }
+                return;
+            }
+
             // Serve website
             if (path.equals("/") && method.equals("GET")) {
                 byte[] content = Files.readAllBytes(

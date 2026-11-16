@@ -6,13 +6,37 @@ const configHandler = require("./api/config");
 
 const app = express();
 const webDirectory = path.join(__dirname, "web");
-const backendUrl = new URL(
-  process.env.CAMPUSCARE_BACKEND_URL || "http://localhost:8080"
-);
+const configuredBackendUrl = process.env.CAMPUSCARE_BACKEND_URL;
+const isHostedRuntime =
+  process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL);
+const backendUrl = configuredBackendUrl
+  ? new URL(configuredBackendUrl)
+  : isHostedRuntime
+    ? null
+    : new URL("http://localhost:8080");
+
+if (backendUrl
+    && (!["http:", "https:"].includes(backendUrl.protocol)
+      || backendUrl.username
+      || backendUrl.password
+      || backendUrl.pathname !== "/"
+      || backendUrl.search
+      || backendUrl.hash)) {
+  throw new Error(
+    "CAMPUSCARE_BACKEND_URL must be an http(s) backend origin without a path, credentials, query, or fragment."
+  );
+}
 
 app.get("/config.js", configHandler);
 
 app.use("/api", (req, res) => {
+  if (!backendUrl) {
+    res.status(503).type("text/plain").send(
+      "Java API backend is not configured. Set CAMPUSCARE_BACKEND_URL to the deployed backend origin."
+    );
+    return;
+  }
+
   const transport = backendUrl.protocol === "https:" ? https : http;
   const headers = { ...req.headers, host: backendUrl.host };
   const proxyRequest = transport.request(
@@ -30,10 +54,11 @@ app.use("/api", (req, res) => {
     }
   );
 
-  proxyRequest.on("error", () => {
+  proxyRequest.on("error", (error) => {
+    console.error("CAMPUSCARE API proxy request failed:", error.message);
     if (!res.headersSent) {
       res.status(502).type("text/plain").send(
-        "CAMPUSCARE API is unavailable. Start the Java backend or check CAMPUSCARE_BACKEND_URL."
+        "CAMPUSCARE API is unavailable. Check that the Java backend is running and CAMPUSCARE_BACKEND_URL is correct."
       );
     } else {
       res.destroy();

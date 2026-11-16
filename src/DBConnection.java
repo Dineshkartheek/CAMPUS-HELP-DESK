@@ -5,36 +5,20 @@ import java.sql.SQLException;
 
 public class DBConnection {
 
-    private static final String URL =
-            System.getenv().getOrDefault(
-                    "DB_URL", "jdbc:mysql://localhost:3306/helpdesk_db");
+    public static Connection getConnection() throws SQLException {
+        String url = requiredEnvironmentVariable("DB_URL");
+        String user = requiredEnvironmentVariable("DB_USER");
+        String password = requiredEnvironmentVariable("DB_PASSWORD");
 
-    private static final String USER =
-            System.getenv().getOrDefault("DB_USER", "root");
+        return DriverManager.getConnection(url, user, password);
+    }
 
-    private static final String PASSWORD =
-            System.getenv("DB_PASSWORD");
-
-    public static Connection getConnection() {
-
-        if (PASSWORD == null || PASSWORD.isEmpty()) {
-            System.out.println("Database password not configured!");
-            return null;
+    private static String requiredEnvironmentVariable(String name)
+            throws SQLException {
+        String value = System.getenv(name);
+        if (value == null || value.isBlank()) {
+            throw new SQLException(name + " environment variable is required");
         }
-
-        try {
-            Connection con =
-                    DriverManager.getConnection(URL, USER, PASSWORD);
-
-            System.out.println(
-                    "MySQL Database Connected Successfully!");
-
-            return con;
-
-        } catch (SQLException e) {
-            System.out.println("Database Connection Failed!");
-            e.printStackTrace();
-            return null;
-        }
+        return value;
     }
 }
