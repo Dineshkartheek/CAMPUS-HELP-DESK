@@ -106,14 +106,18 @@ public class Server {
                      Statement statement = con.createStatement()) {
                     statement.execute("SELECT 1");
                     send(ex, 200,
-                            "{\"status\":\"ok\",\"database\":\"ok\"}",
+                            "{\"status\":\"UP\","
+                            + "\"application\":\"CAMPUSCARE\","
+                            + "\"database\":\"UP\"}",
                             "application/json");
                 } catch (SQLException e) {
                     System.err.println(
                             "CAMPUSCARE database health check failed: "
                             + e.getMessage());
                     send(ex, 503,
-                            "{\"status\":\"unavailable\",\"database\":\"unavailable\"}",
+                            "{\"status\":\"DOWN\","
+                            + "\"application\":\"CAMPUSCARE\","
+                            + "\"database\":\"DOWN\"}",
                             "application/json");
                 }
                 return;
